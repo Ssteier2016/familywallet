@@ -1,8 +1,3 @@
-
-
-import { auth, db } from './firebase';
-import { onAuthStateChanged } from 'firebase/auth';
-import { ref, onValue, set, off } from 'firebase/database';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   PlusCircle, TrendingUp, TrendingDown, DollarSign, Calendar, Users, 
@@ -33,26 +28,24 @@ const CATEGORIES = [
   { id: 'inversion', name: 'Inversión', icon: '📈', color: '#0984E3', type: 'income', isDefault: true, parentId: null, limit: null }
 ];
 
-
 export default function FamilyBudgetApp() {
   const [transactions, setTransactions] = useState([]);
-  // customCategories ahora almacenará subcategorías y categorías personalizadas con sus límites.
   const [customCategories, setCustomCategories] = useState([]);
   const [view, setView] = useState('add');
   const [showSettings, setShowSettings] = useState(false);
-  const [newCategory, setNewCategory] = useState({ // Para nueva categoría principal
+  const [newCategory, setNewCategory] = useState({ 
     name: '',
     type: 'expense',
     icon: '📌',
     color: '#95A5A6',
     isImage: false,
     limit: null,
-    parentId: null, // Siempre null para las que se crean desde este form
+    parentId: null,
   });
-  const [newSubCategoryForm, setNewSubCategoryForm] = useState({ // Para nueva subcategoría
+  const [newSubCategoryForm, setNewSubCategoryForm] = useState({ 
     name: '',
-    parentId: '', // ID de la categoría principal
-    type: 'expense', // Se determinará por el parentId
+    parentId: '', 
+    type: 'expense', 
   });
   const [limitForm, setLimitForm] = useState({
     categoryId: '',
@@ -63,9 +56,9 @@ export default function FamilyBudgetApp() {
     type: 'expense',
     amount: '',
     currency: 'ARS',
-    mainCategory: '', // Nuevo campo para la categoría principal seleccionada
-    category: '', // Ahora almacena la ID de la categoría/subcategoría más específica
-    customCategory: '',
+    mainCategory: '', // ID de la categoría principal seleccionada
+    category: '', // ID de la categoría/subcategoría específica
+    customCategory: '', // Nombre temporal para crear nueva categoría
     note: '',
     date: new Date().toISOString().split('T')[0]
   });
@@ -73,7 +66,7 @@ export default function FamilyBudgetApp() {
 
   // --- Helpers for Categories and Data ---
 
-  // Obtiene todas las categorías (predeterminadas + personalizadas) y garantiza los campos
+  // Obtiene todas las categorías (predeterminadas + personalizadas)
   const getAllCategories = useMemo(() => {
     // Asegura que las categorías predeterminadas tienen los campos nuevos
     const defaultCats = CATEGORIES.map(c => ({
@@ -106,6 +99,16 @@ export default function FamilyBudgetApp() {
   const getSubcategories = (parentId) => {
     return getAllCategories.filter(c => c.parentId === parentId);
   };
+  
+  // Función para obtener el límite actual de una categoría (maneja defaults y customizados)
+  const getCategoryLimit = (catId) => {
+    const custom = customCategories.find(c => c.id === catId && c.parentId === null);
+    if (custom && custom.limit !== null) {
+      return custom.limit;
+    }
+    const defaultCat = CATEGORIES.find(c => c.id === catId);
+    return defaultCat?.limit || null;
+  }
 
   // --- Storage Logic ---
 
@@ -123,12 +126,11 @@ export default function FamilyBudgetApp() {
       if (transResult?.value) {
         setTransactions(JSON.parse(transResult.value));
       }
-      // Al cargar, aseguramos que los objetos antiguos tengan los nuevos campos
       if (catResult?.value) {
         const loadedCats = JSON.parse(catResult.value).map(c => ({
           ...c,
-          parentId: c.parentId || null, // Nuevo default
-          limit: c.limit || null, // Nuevo default
+          parentId: c.parentId || null, 
+          limit: c.limit || null, 
         }));
         setCustomCategories(loadedCats);
       }
@@ -145,7 +147,6 @@ export default function FamilyBudgetApp() {
         window.storage.set('transactions', JSON.stringify(newTransactions), true),
         window.storage.set('custom-categories', JSON.stringify(newCustomCats), true)
       ]);
-      // Forzar actualización del formulario de límites al guardar una nueva cat
       if (newCustomCats !== customCategories) {
         setCustomCategories(newCustomCats);
       }
@@ -159,18 +160,16 @@ export default function FamilyBudgetApp() {
   const handleSubmit = (e) => {
     e.preventDefault();
     
-    // Si la categoría principal no es 'custom', usamos la categoría seleccionada (que puede ser subcat o main)
     let finalCategory = formData.category;
     let updatedCustomCats = customCategories;
-    let mainCategory = formData.mainCategory;
 
-    // Lógica para crear una nueva categoría personalizada *principal*
+    // 1. Lógica para crear una nueva categoría personalizada *principal*
     if (formData.mainCategory === 'custom' && formData.customCategory) {
       const newCat = {
         id: `custom-${Date.now()}`,
         name: formData.customCategory,
         icon: newCategory.icon,
-        color: newCategory.color, // Usar el color predeterminado para el nuevo
+        color: newCategory.color, 
         type: formData.type,
         isDefault: false,
         isImage: false,
@@ -178,16 +177,16 @@ export default function FamilyBudgetApp() {
         limit: null,
       };
       updatedCustomCats = [...customCategories, newCat];
-      // La transacción se asigna a esta nueva categoría principal
       finalCategory = newCat.id;
-      mainCategory = newCat.id;
-
-      // Restablecer el estado temporal de newCategory para evitar confusiones
-      setNewCategory({ name: '', type: 'expense', icon: '📌', color: '#95A5A6', isImage: false, limit: null, parentId: null });
-    } else if (formData.category === 'custom') {
-      // Si seleccionó 'custom' pero no creó una nueva principal (esto no debería pasar con el UI actual, pero es un fallback)
-      return; 
+    } else if (!formData.category) {
+        // En caso de que no haya subcategorías, category debería ser igual a mainCategory.
+        // Esto previene errores si la lógica de onChange falla.
+        finalCategory = formData.mainCategory;
     }
+    
+    // 2. Determinar la categoría principal final (útil para el análisis, sea subcategoría o principal)
+    const catInfo = getCategoryInfo(finalCategory);
+    const finalMainCategory = catInfo.parentId || finalCategory; 
 
     const newTransaction = {
       id: Date.now(),
@@ -195,7 +194,7 @@ export default function FamilyBudgetApp() {
       amount: parseFloat(formData.amount),
       currency: formData.currency,
       category: finalCategory, // ID de la subcat o cat principal
-      mainCategory: mainCategory, // Almacenamos la principal para facilitar el análisis
+      mainCategory: finalMainCategory, // ID de la categoría principal (para análisis/límites)
       note: formData.note,
       date: formData.date,
       timestamp: new Date().toISOString()
@@ -280,13 +279,13 @@ export default function FamilyBudgetApp() {
     const subCategoryToAdd = {
       id: `sub-${Date.now()}`,
       name: newSubCategoryForm.name,
-      icon: parentCat.icon, // Hereda el ícono del padre
-      color: parentCat.color, // Hereda el color del padre
+      icon: parentCat.icon, 
+      color: parentCat.color, 
       type: parentCat.type,
       isDefault: false,
       isImage: parentCat.isImage,
-      parentId: newSubCategoryForm.parentId, // Referencia al padre
-      limit: null, // Las subcategorías no tienen límite propio
+      parentId: newSubCategoryForm.parentId, 
+      limit: null, 
     };
 
     const updatedCustomCats = [...customCategories, subCategoryToAdd];
@@ -297,13 +296,12 @@ export default function FamilyBudgetApp() {
   };
 
   const deleteCustomCategory = (catId) => {
-    // No permitir eliminar categorías que tengan transacciones o subcategorías
     const hasTransactions = transactions.some(t => t.category === catId || t.mainCategory === catId);
     const hasSubcategories = getSubcategories(catId).length > 0;
     
     if (hasTransactions || hasSubcategories) {
         console.error("No se puede eliminar: tiene transacciones o subcategorías asociadas.");
-        // Aquí se usaría un modal para informar al usuario
+        // En una app real, mostrarías un modal de error aquí.
         return;
     }
 
@@ -321,29 +319,20 @@ export default function FamilyBudgetApp() {
     const limitValue = parseFloat(limit);
     if (isNaN(limitValue) || limitValue < 0) return;
 
-    // La categoría puede ser una predeterminada o una personalizada
     const targetCat = getAllCategories.find(c => c.id === categoryId);
     if (!targetCat) return;
 
     let updatedCustomCats = [...customCategories];
 
-    if (targetCat.isDefault) {
-      // Si es predeterminada, debemos agregar una "copia" a customCategories
-      // solo con el límite para que se guarde.
-      const existingCustom = updatedCustomCats.find(c => c.id === categoryId);
-      if (existingCustom) {
-        // Si ya existe la copia (por un límite anterior), la actualizamos
-        existingCustom.limit = limitValue;
-      } else {
-        // Si no existe, creamos el objeto para guardar el límite
-        updatedCustomCats.push({ ...targetCat, limit: limitValue, isDefault: false });
-      }
-    } else {
-      // Si es personalizada, la actualizamos directamente
-      const customCatIndex = updatedCustomCats.findIndex(c => c.id === categoryId);
-      if (customCatIndex !== -1) {
-        updatedCustomCats[customCatIndex].limit = limitValue;
-      }
+    // Lógica para manejar categorías predeterminadas y personalizadas
+    const existingCustomIndex = updatedCustomCats.findIndex(c => c.id === categoryId && c.parentId === null);
+    
+    if (existingCustomIndex !== -1) {
+      // Si ya existe en custom (es un default con límite o una custom sin límite)
+      updatedCustomCats[existingCustomIndex].limit = limitValue;
+    } else if (targetCat.isDefault) {
+      // Si es predeterminada y no tiene registro de límite, creamos uno
+      updatedCustomCats.push({ ...targetCat, limit: limitValue, isDefault: false });
     }
 
     setCustomCategories(updatedCustomCats);
@@ -351,32 +340,18 @@ export default function FamilyBudgetApp() {
     setLimitForm({ categoryId: '', limit: '' });
   };
   
-  // Función para obtener el límite actual de una categoría
-  const getCategoryLimit = (catId) => {
-    const custom = customCategories.find(c => c.id === catId && c.parentId === null);
-    if (custom && custom.limit !== null) {
-      return custom.limit;
-    }
-    const defaultCat = CATEGORIES.find(c => c.id === catId);
-    return defaultCat?.limit || null;
-  }
+  // --- Analytics Logic ---
 
-  // --- Analytics Logic (Updated) ---
-  
-  // Obtiene el gasto total para una categoría principal y sus subcategorías en el mes actual
   const getCategorySpendingThisMonth = (mainCatId) => {
     const now = new Date();
     const currentMonth = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
     
-    // IDs de la categoría principal y sus subcategorías
-    const relevantIds = [mainCatId, ...getSubcategories(mainCatId).map(c => c.id)];
-
     let totalSpent = 0;
     
     transactions.forEach(t => {
       const transactionMonth = new Date(t.date).getFullYear() + '-' + String(new Date(t.date).getMonth() + 1).padStart(2, '0');
       
-      if (transactionMonth === currentMonth && t.type === 'expense' && relevantIds.includes(t.category)) {
+      if (transactionMonth === currentMonth && t.type === 'expense' && t.mainCategory === mainCatId) {
         const amountInARS = t.currency === 'USD' ? t.amount * 1000 : t.amount;
         totalSpent += amountInARS;
       }
@@ -385,14 +360,13 @@ export default function FamilyBudgetApp() {
     return totalSpent;
   };
   
-  // Prepara los datos para el control de presupuesto (solo categorías principales con límite)
   const getBudgetControlData = () => {
     const mainExpenseCategories = getMainCategoriesByType('expense');
     
     return mainExpenseCategories
       .map(cat => {
         const limit = getCategoryLimit(cat.id);
-        if (limit === null || limit <= 0) return null; // Solo categorías con límite
+        if (limit === null || limit <= 0) return null;
 
         const spent = getCategorySpendingThisMonth(cat.id);
         const remaining = limit - spent;
@@ -403,11 +377,11 @@ export default function FamilyBudgetApp() {
           limit,
           spent,
           remaining,
-          percentage: Math.min(percentage, 100) // Máximo 100% para la barra
+          percentage: Math.min(percentage, 100) 
         };
       })
       .filter(data => data !== null)
-      .sort((a, b) => a.percentage - b.percentage); // Mostrar los más críticos primero
+      .sort((a, b) => a.percentage - b.percentage); 
   };
 
   const getMonthlyData = () => {
@@ -437,10 +411,9 @@ export default function FamilyBudgetApp() {
     const categoryMap = {};
     
     transactions.filter(t => t.type === 'expense').forEach(t => {
-      const cat = getCategoryInfo(t.category);
-      // Usar el ID de la categoría principal para la agrupación del gráfico de pastel
-      const displayId = cat.parentId || t.category; 
-      const displayCat = getCategoryInfo(displayId); // Info de la categoría principal o de la subcat si es principal
+      // Usamos t.mainCategory para la agrupación del gráfico de pastel
+      const displayId = t.mainCategory; 
+      const displayCat = getCategoryInfo(displayId); 
 
       const amountInARS = t.currency === 'USD' ? t.amount * 1000 : t.amount;
       
@@ -703,7 +676,19 @@ export default function FamilyBudgetApp() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">Categoría Principal</label>
                 <select
                   value={formData.mainCategory}
-                  onChange={(e) => setFormData({...formData, mainCategory: e.target.value, category: '', customCategory: ''})}
+                  onChange={(e) => {
+                    const newMainId = e.target.value;
+                    
+                    // Si se selecciona una categoría existente, 'category' debe ser la ID principal por defecto.
+                    const newCategoryValue = (newMainId && newMainId !== 'custom') ? newMainId : ''; 
+                        
+                    setFormData({
+                        ...formData, 
+                        mainCategory: newMainId, 
+                        category: newCategoryValue,
+                        customCategory: ''
+                    });
+                  }}
                   className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                   required
                 >
@@ -726,6 +711,7 @@ export default function FamilyBudgetApp() {
                       onChange={(e) => setFormData({...formData, category: e.target.value})}
                       className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                     >
+                      {/* Por defecto, si no se selecciona subcategoría, se usa la categoría principal */}
                       <option value={formData.mainCategory}>[Usar {getCategoryInfo(formData.mainCategory).name} (Principal)]</option>
                       {subcategoriesForMain.map(cat => (
                         <option key={cat.id} value={cat.id}>
@@ -750,21 +736,6 @@ export default function FamilyBudgetApp() {
                   />
                 </div>
               )}
-              
-              {/* Fallback for category selection: If no subcategories, category defaults to mainCategory */}
-              {formData.mainCategory && formData.mainCategory !== 'custom' && subcategoriesForMain.length === 0 && (
-                <input 
-                  type="hidden" 
-                  value={formData.mainCategory} 
-                  onChange={() => {}} 
-                  onFocus={() => { // Set category to mainCategory on load/change
-                    if (formData.category === '' || formData.category === 'custom') {
-                       setFormData(f => ({...f, category: f.mainCategory}));
-                    }
-                  }}
-                />
-              )}
-
 
               {/* Date */}
               <div>
@@ -792,11 +763,12 @@ export default function FamilyBudgetApp() {
 
               <button
                 type="submit"
+                // Validación: Se requiere monto, categoría principal. Si es 'custom', se requiere el nombre, sino, se requiere 'category' (que debe ser un ID válido).
                 disabled={
                   !formData.amount || 
+                  !formData.mainCategory || 
                   (formData.mainCategory === 'custom' && !formData.customCategory) ||
-                  (formData.mainCategory !== 'custom' && !formData.category && subcategoriesForMain.length > 0) ||
-                  (!formData.mainCategory)
+                  (formData.mainCategory !== 'custom' && !formData.category)
                 }
                 className="w-full bg-indigo-600 text-white py-4 rounded-xl font-medium hover:bg-indigo-700 transition-colors shadow-lg disabled:bg-gray-400 disabled:cursor-not-allowed"
               >
@@ -820,7 +792,7 @@ export default function FamilyBudgetApp() {
               <div className="space-y-3">
                 {[...transactions].reverse().map(transaction => {
                   const cat = getCategoryInfo(transaction.category);
-                  const mainCat = getCategoryInfo(cat.parentId || transaction.category); // Obtiene la principal si existe
+                  const mainCat = getCategoryInfo(transaction.mainCategory); 
                   
                   return (
                     <div
@@ -1214,7 +1186,8 @@ export default function FamilyBudgetApp() {
                                 <span className="text-xs text-indigo-600 font-medium">Límite: {formatCurrency(getCategoryLimit(mainCat.id), 'ARS')}</span>
                             )}
                         </div>
-                        {!mainCat.isDefault && getSubcategories(mainCat.id).length === 0 && (
+                        {/* Solo permitir eliminar si no tiene subcategorías ni transacciones */}
+                        {!mainCat.isDefault && getSubcategories(mainCat.id).length === 0 && !transactions.some(t => t.mainCategory === mainCat.id) && (
                           <button
                             onClick={() => deleteCustomCategory(mainCat.id)}
                             className="text-red-500 hover:text-red-700 transition-colors p-2"
@@ -1231,17 +1204,37 @@ export default function FamilyBudgetApp() {
                                 <ArrowRight className="w-4 h-4 text-gray-400" />
                                 <span className="font-medium text-gray-700">{subCat.name}</span>
                             </div>
-                            <button
-                                onClick={() => deleteCustomCategory(subCat.id)}
-                                className="text-red-500 hover:text-red-700 transition-colors p-2"
-                                disabled={transactions.some(t => t.category === subCat.id)}
-                            >
-                                <Trash2 className="w-5 h-5" />
-                            </button>
+                            {/* Solo permitir eliminar si no tiene transacciones */}
+                            {!transactions.some(t => t.category === subCat.id) && (
+                              <button
+                                  onClick={() => deleteCustomCategory(subCat.id)}
+                                  className="text-red-500 hover:text-red-700 transition-colors p-2"
+                              >
+                                  <Trash2 className="w-5 h-5" />
+                              </button>
+                            )}
                         </div>
                       ))}
                     </React.Fragment>
                   ))}
+                  
+                  {/* Categorías de Ingresos Principales (sin subcategorías por simplicidad) */}
+                   {getMainCategoriesByType('income').map(mainCat => (
+                    <div key={mainCat.id} className="flex items-center justify-between p-3 bg-green-50 rounded-xl border border-green-200">
+                        <div className="flex items-center gap-2">
+                            <span className="text-xl">{mainCat.icon}</span>
+                            <span className="font-bold text-gray-800">{mainCat.name} (Ingreso)</span>
+                        </div>
+                        {!mainCat.isDefault && !transactions.some(t => t.mainCategory === mainCat.id) && (
+                          <button
+                            onClick={() => deleteCustomCategory(mainCat.id)}
+                            className="text-red-500 hover:text-red-700 transition-colors p-2"
+                          >
+                            <Trash2 className="w-5 h-5" />
+                          </button>
+                        )}
+                    </div>
+                   ))}
                 </div>
               </div>
             </div>
